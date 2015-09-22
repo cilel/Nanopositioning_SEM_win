@@ -153,7 +153,7 @@ void diep(const char *s)
     exit(1);
 }
 
-int send_wMe(vpHomogeneousMatrix wMe, double scale)
+vpColVector convertPose(vpHomogeneousMatrix wMe, double scale)
 {
 
     vpTranslationVector T;
@@ -161,42 +161,16 @@ int send_wMe(vpHomogeneousMatrix wMe, double scale)
     vpThetaUVector R;
     wMe.extract(R);
 
-    //cout << "Translation=\n"<<T << "\nRotation=\n" << R << endl;
+    vpColVector Pose;
+    Pose.resize(6);
+    Pose[0]=T[0]*scale; // unit TO BE check!
+    Pose[1]=T[1]*scale;
+    Pose[2]=T[2]*scale;
+    Pose[3]=R[0];
+    Pose[4]=R[1];
+    Pose[5]=R[2];
 
-    /* diep(), #includes and #defines like in the server */
-
-    double Pose_send[6];
-    Pose_send[0]=T[0]*1000/scale;//convert meter to milimeter
-    Pose_send[1]=T[1]*1000/scale;
-    Pose_send[2]=T[2]*1000/scale;
-    Pose_send[3]=R[0];
-    Pose_send[4]=R[1];
-    Pose_send[5]=R[2];
-
-    cout << "Pose_send(wMe)=\n" << Pose_send[0]<< " " << Pose_send[1]<< " " << Pose_send[2]<< " " << Pose_send[3]<< " " << Pose_send[4]<< " " << Pose_send[5] << endl;
-
-    struct sockaddr_in si_other;
-    int s, i, slen=sizeof(si_other);
-
-    if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP))==-1)
-        diep("socket");
-
-    memset((char *) &si_other, 0, sizeof(si_other));
-    si_other.sin_family = AF_INET;
-    si_other.sin_port = htons(PORT);
-    if (inet_aton(SRV_IP, &si_other.sin_addr)==0) {
-        fprintf(stderr, "inet_aton() failed\n");
-        exit(1);
-    }
-
-    if (sendto(s, Pose_send, sizeof(Pose_send), 0, (struct sockaddr *) &si_other, slen)==-1)
-        diep("sendto()");
-    close(s);
-
-    vpTime::wait(600);
-
-    return 0;
-
+    return Pose;
 }
 
 void getFilteredImage(vpImage<unsigned char> &Iout, vpImage<unsigned char> Iin)
@@ -226,7 +200,6 @@ main(int argc, const char ** argv)
     std::string opt_ipath;
     std::string ipath;
     std::string filename;
-    std::string readFileFlag;
     bool opt_click_allowed = true;
     bool opt_display = true;
     bool denoise = false;
@@ -235,9 +208,13 @@ main(int argc, const char ** argv)
     pjModel = parallelZ;  // here I choose parallel projection model on considering Z
     nsModel = Gauss_dynamic;
 
-    // SOCKET sock;    // déclaration du socket pour la communication par TCP/IP
-    int sock; // here I use int instead of Socket since I can't find a class SOCKET
-    char bufferImg[BUFFER_IMG];    //déclaration du buffer pour stocker l'image
+
+    short imgX,imgY,imgW,imgH; // Les paramètres de la zone ROI
+        imgX=100;
+        imgY=100;
+        imgW=256;
+        imgH=256;
+    CommSEM Auriga60;
 
     npFeatureLuminance::controlLawZ clZ = npFeatureLuminance::ImageGradient;
 
@@ -299,7 +276,40 @@ main(int argc, const char ** argv)
     cMod = cMw * wMo;
     cMe = cMw * wMe;
 
-    send_wMe(wMe,scale);// to ensure the init pose of plateform
+
+    //--------------------- Begin to move !-----------------------------
+
+    CommROBOT Robot6Axes;
+
+    // Connection
+      Result=Robot6Axes.Connect("127.0.0.1");
+        if (!Result)
+            {
+            cout << "Pb de connection Robot !";
+            return 0;
+            }
+
+    // Définition du centre outil dont on commandera la vitesse de déplacement
+    Result=Robot6Axes.SetTCP(50.5,0,0,0,0,0);
+     if (!Result)
+        {
+        cout << "Pb de SetTCP!";
+        return 0;
+        }
+
+    // Lancement de la commande en vitesse (les vitesse sont toutes forcées à zéro au lancement)
+    Result=Robot6Axes.SetSpdCtrl(true);
+    if (!Result)
+    {
+    cout << "Pb de SetSpdCtrl !";
+    return 0;
+    }
+
+    vpColVector desiredPose= convertPose(wMe,scale);// to ensure the init pose of plateform
+/*
+    // c'est possible de controler le robot par envoyer la pose desirée?
+    Result=Robot6Axes.SetPoseCmd(desiredPose);
+*/
 
     vpHomogeneousMatrix cModR;
 
@@ -334,7 +344,12 @@ main(int argc, const char ** argv)
     cout << "cMe_desired=\n" << cMe << endl;
     cout << "cMo_desired=\n" << cMo << endl;
 
-    send_wMe(wMe,scale);
+    desiredPose = convertPose(wMe,scale);
+
+    /*
+        // c'est possible de controler le robot par la pose desirée?
+        Result=Robot6Axes.SetPoseCmd(desiredPose);
+    */
 
     vpImage<unsigned char> I,Id;
     filename = ipath;
@@ -343,12 +358,23 @@ main(int argc, const char ** argv)
     vpTime::wait(50);
 
     // -----------------------------get image from c#--------------------------
-   send(sock,"start",5,0);         // demander une acquisition
-   recv(sock, bufferImg, BUFFER_IMG, 0);    // réception de l'image
-   cv::Mat image(360, 360,CV_8UC1, bufferImg);    // passage de l'image à OpenCV
+    bool Result=Auriga60.Connect("192.168.125.195"); // first connection
+        if (!Result)
+            {
+            cout << "Pb de connection SEM!";
+            return 0;
+            }
 
-   // convert the Mat to VpImage
-   vpImageConvert::convert(image,Id);
+    // Définition ROI
+     Result=Auriga60.SetROI(imgX,imgY,imgW,imgH);
+        if (!Result)
+            {
+            cout << "Pb de SetROI !";
+            return 0;
+            }
+     Auriga60.GetImageSEM(); // Je vous conseil d'ajouter une function GetImageSEMViSP()
+     // convert the Mat to VpImage
+     vpImageConvert::convert(Auriga60.Image,Id);
 
     if (divide_image)
         getDividedImage(Id,Id);
@@ -429,17 +455,19 @@ main(int argc, const char ** argv)
     cout << "cMe_first=\n" << cMe << endl;
     cout << "cMo_first=\n" << cMo << endl;
 
-    send_wMe(wMe,scale);
+    vpColVector currentPose = convertPose(wMe,scale);
+
+    /*
+        // c'est possible de controler le robot par la pose desirée?
+        Result=Robot6Axes.SetPoseCmd(currentPose);
+    */
 
     I.resize(0,0);
 
      // -----------------------------get image from c#--------------------------
-    send(sock,"start",5,0);         // demander une acquisition
-    recv(sock, bufferImg, BUFFER_IMG, 0);    // réception de l'image
-    cv::Mat img_temp(360, 360,CV_8UC1, bufferImg);    // passage de l'image à OpenCV
-    image = img_temp;
+    Auriga60.GetImageSEM(); // Je vous conseil d'ajouter une function GetImageSEMViSP()
     // convert the Mat to VpImage
-    vpImageConvert::convert(img_temp,I);
+    vpImageConvert::convert(Auriga60.Image,I);
 
     if (divide_image)
         getDividedImage(I,I);
@@ -772,15 +800,16 @@ main(int argc, const char ** argv)
 
     wMe = wMe * vpExponentialMap::direct(vm,1);
     cMo = cMw * wMe * eMo;
-    send_wMe(wMe,scale);
+    currentPose = convertPose(wMe,scale);
+    /*
+        // c'est possible de controler le robot par la pose desirée?
+        Result=Robot6Axes.SetPoseCmd(currentPose);
+    */
 
     // -----------------------------get image from c#--------------------------
-   send(sock,"start",5,0);         // demander une acquisition
-   recv(sock, bufferImg, BUFFER_IMG, 0);    // réception de l'image
-   cv::Mat imgTempP(360, 360,CV_8UC1, bufferImg);    // passage de l'image à OpenCV
-   image = imgTempP;
-   // convert the Mat to VpImage
-   vpImageConvert::convert(imgTempP,I);
+    Auriga60.GetImageSEM(); // Je vous conseil d'ajouter une function GetImageSEMViSP()
+    // convert the Mat to VpImage
+    vpImageConvert::convert(Auriga60.Image,I);
 
     cout  <<"sigma=" << sigma << endl;
     cout << "cMo[2][3]=" << cMo[2][3] << endl;
@@ -799,15 +828,16 @@ main(int argc, const char ** argv)
 
     wMe = wMe * vpExponentialMap::direct(vm,1);
     cMo = cMw * wMe * eMo;
-    send_wMe(wMe,scale);
+    currentPose = convertPose(wMe,scale);
+    /*
+        // c'est possible de controler le robot par la pose desirée?
+        Result=Robot6Axes.SetPoseCmd(currentPose);
+    */
 
     // -----------------------------get image from c#--------------------------
-   send(sock,"start",5,0);         // demander une acquisition
-   recv(sock, bufferImg, BUFFER_IMG, 0);    // réception de l'image
-   cv::Mat imgTempM(360, 360,CV_8UC1, bufferImg);    // passage de l'image à OpenCV
-   image = imgTempM;
-   // convert the Mat to VpImage
-   vpImageConvert::convert(imgTempM,I);
+    Auriga60.GetImageSEM(); // Je vous conseil d'ajouter une function GetImageSEMViSP()
+    // convert the Mat to VpImage
+    vpImageConvert::convert(Auriga60.Image,I);
 
     cout  <<"sigma=" << sigma << endl;
     cout << "cMo[2][3]=" << cMo[2][3] << endl;
@@ -827,15 +857,16 @@ main(int argc, const char ** argv)
 
     wMe = wMe * vpExponentialMap::direct(vm,1);
     cMo = cMw * wMe * eMo;
-    send_wMe(wMe,scale);
+    currentPose = convertPose(wMe,scale);
+    /*
+        // c'est possible de controler le robot par la pose desirée?
+        Result=Robot6Axes.SetPoseCmd(currentPose);
+    */
 
     // -----------------------------get image from c#--------------------------
-   send(sock,"start",5,0);         // demander une acquisition
-   recv(sock, bufferImg, BUFFER_IMG, 0);    // réception de l'image
-   cv::Mat imgTempO(360, 360,CV_8UC1, bufferImg);    // passage de l'image à OpenCV
-   image = imgTempO;
-   // convert the Mat to VpImage
-   vpImageConvert::convert(imgTempO,I);
+    Auriga60.GetImageSEM(); // Je vous conseil d'ajouter une function GetImageSEMViSP()
+    // convert the Mat to VpImage
+    vpImageConvert::convert(Auriga60.Image,I);
 
     cout  <<"sigma=" << sigma << endl;
     cout << "cMo[2][3]=" << cMo[2][3] << endl;
@@ -886,12 +917,9 @@ main(int argc, const char ** argv)
         std::cout << "--------------------------------------------" << iter++ << std::endl ;
 
         // -----------------------------get image from c#--------------------------
-       send(sock,"start",5,0);         // demander une acquisition
-       recv(sock, bufferImg, BUFFER_IMG, 0);    // réception de l'image
-       cv::Mat imgTemp(360, 360,CV_8UC1, bufferImg);    // passage de l'image à OpenCV
-       image = imgTemp;
-       // convert the Mat to VpImage
-       vpImageConvert::convert(imgTemp,I);
+        Auriga60.GetImageSEM(); // Je vous conseil d'ajouter une function GetImageSEMViSP()
+        // convert the Mat to VpImage
+        vpImageConvert::convert(Auriga60.Image,I);
 
         cout << "cMo[2][3]=" << cMo[2][3] << endl;
         if (divide_image)
@@ -1141,11 +1169,18 @@ main(int argc, const char ** argv)
         cout << "lambda = " << lambda << "  mu = " << mu ;
         cout << " |Tc| = " << sqrt(v.sumSquare()) << endl;
 
-        wMe = wMe * vpExponentialMap::direct(v,0.04);
+/*        wMe = wMe * vpExponentialMap::direct(v,0.04);
 
     //    cout << "wMe2_current=\n" << wMe << endl;
 
-        send_wMe(wMe,scale);
+        convertPose(wMe,scale);*/
+
+
+        // ------------- Send Velocity to robot --------------
+
+        Robot6Axes.SetSpdCmd(0.001*Compteur,0.1,0.1,0.0,0.0,0.0);
+
+
 
         cMo = cMw * wMe * eMo;
 
@@ -1238,7 +1273,15 @@ main(int argc, const char ** argv)
 
     }
     // while(normError > threshold  && iter < opt_niter);// && !(vpMath::equal(normError,normError_p, convergence_threshold) && normError < 1.5*threshold));
-    while(1) ;
+    while(iter < 500) ; // STOP manually !!!!
+
+    // Arrèt de la commande en vitesse
+         Result=Robot6Axes.SetSpdCtrl(false);
+         if (!Result)
+            {
+            cout << "Pb de SetSpdCtrl !";
+            return 0;
+            }
 
     vpImageIo::writePNG(Idiff,"../Result/img_end.png");
 
