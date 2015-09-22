@@ -53,8 +53,6 @@
 #define SRV_IP "127.0.0.1"
 #define UDP_VIDEO_IP "127.0.0.1"
 
-#define BUFFER_IMG 49153 //: buffer ayant la taille de l'image en nb de pixels:786433 Buffer pour l'image
-
 #define MU 0.04
 
 // List of allowed command line options
@@ -278,7 +276,7 @@ main(int argc, const char ** argv)
     CommROBOT Robot6Axes;
 
     // Connection
-      Result=Robot6Axes.Connect("127.0.0.1");
+    Result=Robot6Axes.Connect("127.0.0.1");
         if (!Result)
             {
             cout << "Pb de connection Robot !";
@@ -360,7 +358,7 @@ main(int argc, const char ** argv)
     sId.setSigma(1);//just a value, not useful
     sId.buildFrom(Id);
     double Sgd_sum=sId.getGlobleSg();
-   // double s_d = sId.computeImageGradient(Id);
+    double s_d = sId.computeImageGradient(Id);
     double Snvd = sId.getGlobleSnv();
 
     // display the image
@@ -1016,8 +1014,8 @@ main(int argc, const char ** argv)
             }
             else
             {
-                reg.addXY(cMo[2][3],sI.computeImageGradient(I));
-                cout << "G = "<< sI.computeImageGradient(I) <<endl;
+                reg.addXY(cMo[2][3],Sg_sum);
+                cout << "G = "<< Sg_sum <<endl;
                 reg.ridgeRegression();
             }
             p = reg.getParameters();
