@@ -18,3 +18,14 @@ ADD_EXECUTABLE( testImageAcquisition
 ADD_EXECUTABLE( testRobotControl 
 		testRobotControl.cpp
 		) 
+
+
+ADD_EXECUTABLE( Nanopositioning_SEM_win 
+		Nanopositioning_SEM_win.cpp
+ 		npFeatureLuminance.cpp 
+		npFeatureLuminance.h  
+		npRegression.cpp 
+		npRegression.h
+		npImageProcessing.cpp
+		npImageProcessing.h
+		) 
