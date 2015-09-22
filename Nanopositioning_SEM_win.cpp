@@ -153,26 +153,6 @@ void diep(const char *s)
     exit(1);
 }
 
-vpColVector convertPose(vpHomogeneousMatrix wMe, double scale)
-{
-
-    vpTranslationVector T;
-    wMe.extract(T);
-    vpThetaUVector R;
-    wMe.extract(R);
-
-    vpColVector Pose;
-    Pose.resize(6);
-    Pose[0]=T[0]*scale; // unit TO BE check!
-    Pose[1]=T[1]*scale;
-    Pose[2]=T[2]*scale;
-    Pose[3]=R[0];
-    Pose[4]=R[1];
-    Pose[5]=R[2];
-
-    return Pose;
-}
-
 void getFilteredImage(vpImage<unsigned char> &Iout, vpImage<unsigned char> Iin)
 {
     cv::Mat Ii,Io;
@@ -276,6 +256,22 @@ main(int argc, const char ** argv)
     cMod = cMw * wMo;
     cMe = cMw * wMe;
 
+    vpHomogeneousMatrix cModR;
+
+    cModR = wMcR.inverse()*wMo;
+
+    cout << "cMod=\n"<< cMod << endl;
+
+    // ----------------move to desired pose -----------------
+    vpColVector currentPose;//velocity to be sent for the init pose, in meter or specified unit
+    currentPose.resize(6);
+    // vm[0]= 10e-6*scale; // Tx, 10e-6: 10 um
+    // vm[1]= 5e-6*scale; // Ty
+    //vm[2]= 5e-6*scale; // Tz
+    // vm[3]=vpMath::rad(-0.1); // Rx
+    // vm[4]=vpMath::rad(0.1); // Ry
+   //  vm[5]=vpMath::rad(2); // Rz
+
 
     //--------------------- Begin to move !-----------------------------
 
@@ -305,50 +301,9 @@ main(int argc, const char ** argv)
     return 0;
     }
 
-    vpColVector desiredPose= convertPose(wMe,scale);// to ensure the init pose of plateform
-/*
-    // c'est possible de controler le robot par envoyer la pose desirée?
-    Result=Robot6Axes.SetPoseCmd(desiredPose);
-*/
-
-    vpHomogeneousMatrix cModR;
-
-    cModR = wMcR.inverse()*wMo;
-
-/*    //test
-    vpThetaUVector R_cMod;
-    cModR.extract(R_cMod);
-    cout<< "Rot_cMod in deg=" << vpMath::deg(R_cMod[0])<< "\t"<< vpMath::deg(R_cMod[1])<< "\t"<< vpMath::deg(R_cMod[2])<<"\n";
-*/
-
-    cout << "cMod=\n"<< cMod << endl;
-
-    // ----------------move to desired pose -----------------
-    vpColVector vm;//velocity to be sent for the init pose, in meter or specified unit
-    vm.resize(6);
-    // vm[0]= 10e-6*scale; // Tx, 10e-6: 10 um
-    // vm[1]= 5e-6*scale; // Ty
-    //vm[2]= 5e-6*scale; // Tz
-    // vm[3]=vpMath::rad(-0.1); // Rx
-    // vm[4]=vpMath::rad(0.1); // Ry
-   //  vm[5]=vpMath::rad(2); // Rz
-
-    wMe = wMe * vpExponentialMap::direct(vm,1);
-    cMo = cMw * wMe * eMo ;
-
-    vpHomogeneousMatrix wMe_ogn = wMe; // save original wMe
-
-    cout << "vpExponentialMap::direct(vm,1)=\n" << vpExponentialMap::direct(vm,1) << endl;
-
-    cout << "wMe_desired=\n" << wMe << endl;
-    cout << "cMe_desired=\n" << cMe << endl;
-    cout << "cMo_desired=\n" << cMo << endl;
-
-    desiredPose = convertPose(wMe,scale);
-
     /*
         // c'est possible de controler le robot par la pose desirée?
-        Result=Robot6Axes.SetPoseCmd(desiredPose);
+        Result=Robot6Axes.SetPoseCmd(vm);
     */
 
     vpImage<unsigned char> I,Id;
@@ -372,7 +327,7 @@ main(int argc, const char ** argv)
             cout << "Pb de SetROI !";
             return 0;
             }
-     Auriga60.GetImageSEM(); // Je vous conseil d'ajouter une function GetImageSEMViSP()
+     Auriga60.GetImageSEM();
      // convert the Mat to VpImage
      vpImageConvert::convert(Auriga60.Image,Id);
 
@@ -434,9 +389,9 @@ main(int argc, const char ** argv)
     /*----------------------Here move the plateform for moving back --------------*/
 
 
-    vm.resize(6);
+    currentPose.resize(6);
     // vm[0]= 10e-6*scale; // Tx
-     vm[1]= 5e-6*scale; // Ty
+     currentPose[1]= 5e-6*scale; // Ty
     //vm[2]= 5e-6*scale; // Tz
     // vm[3]=vpMath::rad(-0.1); // Rx
     // vm[4]=vpMath::rad(0.1); // Ry
@@ -446,20 +401,10 @@ main(int argc, const char ** argv)
 
     //  cout << "wMe_tmp=\n" <<  wMe_tmp << endl;
 
-    wMe = wMe_ogn * vpExponentialMap::direct(vm,1);
-    cMo = cMw * wMe * eMo ;
-
-    cout << "vpExponentialMap::direct(vm,1)=\n" << vpExponentialMap::direct(vm,1) << endl;
-
-    cout << "wMe_first=\n" << wMe << endl;
-    cout << "cMe_first=\n" << cMe << endl;
-    cout << "cMo_first=\n" << cMo << endl;
-
-    vpColVector currentPose = convertPose(wMe,scale);
 
     /*
         // c'est possible de controler le robot par la pose desirée?
-        Result=Robot6Axes.SetPoseCmd(currentPose);
+        Result=Robot6Axes.SetPoseCmd(vm);
     */
 
     I.resize(0,0);
@@ -784,7 +729,7 @@ main(int argc, const char ** argv)
     // vpHomogeneousMatrix edMe,e/*dMw ;
     vpHomogeneousMatrix odMo ;
 
-    fileResidu <<"#projection model:" << pjModel << "\t init pose:" << vm.t() << endl;
+    fileResidu <<"#projection model:" << pjModel << "\t init pose:" << currentPose.t() << endl;
 
     double Sg_previsous; // recode image gradient at 1st iteration to compute the sign of veloctiy
     int sign=1; // sign for velocity
@@ -795,15 +740,11 @@ main(int argc, const char ** argv)
     std::cout << "------------------- Driving direction -------------------------" << std::endl ;
 
     std::cout << "///////// plus /////////////" << std::endl ;
-    vm.resize(6);
-    vm[2]=20e-6;
-
-    wMe = wMe * vpExponentialMap::direct(vm,1);
-    cMo = cMw * wMe * eMo;
-    currentPose = convertPose(wMe,scale);
+    currentPose.resize(6);
+    currentPose[2]=20e-6;
     /*
         // c'est possible de controler le robot par la pose desirée?
-        Result=Robot6Axes.SetPoseCmd(currentPose);
+        Result=Robot6Axes.SetPoseCmd(movingPose);
     */
 
     // -----------------------------get image from c#--------------------------
@@ -823,12 +764,9 @@ main(int argc, const char ** argv)
     double z_plus = cMo[2][3];
 
     std::cout << "///////// minus /////////////" << std::endl ;
-    vm.resize(6);
-    vm[2]=-40e-6;
+    currentPose.resize(6);
+    currentPose[2]=-40e-6;
 
-    wMe = wMe * vpExponentialMap::direct(vm,1);
-    cMo = cMw * wMe * eMo;
-    currentPose = convertPose(wMe,scale);
     /*
         // c'est possible de controler le robot par la pose desirée?
         Result=Robot6Axes.SetPoseCmd(currentPose);
@@ -852,12 +790,8 @@ main(int argc, const char ** argv)
 
 
     std::cout << "///////// origin /////////////" << std::endl ;
-    vm.resize(6);
-    vm[2]=20e-6;
-
-    wMe = wMe * vpExponentialMap::direct(vm,1);
-    cMo = cMw * wMe * eMo;
-    currentPose = convertPose(wMe,scale);
+    currentPose.resize(6);
+    currentPose[2]=20e-6;
     /*
         // c'est possible de controler le robot par la pose desirée?
         Result=Robot6Axes.SetPoseCmd(currentPose);
@@ -1178,7 +1112,7 @@ main(int argc, const char ** argv)
 
         // ------------- Send Velocity to robot --------------
 
-        Robot6Axes.SetSpdCmd(0.001*Compteur,0.1,0.1,0.0,0.0,0.0);
+        Robot6Axes.SetSpdCmd(v[0],v[1],v[2],v[3],v[4],v[5]); // possible de faire une function Robot6Axes.SetSpdCmd(v)?
 
 
 
